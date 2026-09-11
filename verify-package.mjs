@@ -12,6 +12,8 @@
  *   - the host half waits for the async `settings` provider instead of racing it
  *   - the failover decisions hold: escape a dead node, never fake a switch, degrade only
  *     when everything is measured-and-dead
+ *   - the agent-facing skill registers with the syntax in its description, and only while
+ *     the shim it advertises is actually on PATH
  */
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -213,6 +215,55 @@ console.log('\n[9] failover decisions')
     if (second === first) ok('second tick inside the throttle window did not re-escalate')
     else bad(`escalation was not throttled (${first} -> ${second})`)
   }
+}
+
+// --- agent skill: the only thing that tells the Agent `proxy` exists ---------
+// The catalog line is what the model sees on every step; the body is loaded only on demand.
+// So the assertion that matters most here is that the SYNTAX lives in the description.
+console.log('\n[10] agent skill registration')
+{
+  const { registerAgentSkill, AGENT_SKILL_NAME } = await import('./lib/skill.js')
+  const fakeCtx = (skills) => ({ get: (name) => (name === 'skills' ? skills : undefined) })
+
+  {
+    const disposer = () => {}
+    let captured = null
+    const skills = { register: (skill) => { captured = skill; return disposer } }
+    const returned = registerAgentSkill(fakeCtx(skills))
+    const s = captured
+    if (returned === disposer) ok('returns the registry disposer (so the skill can be unregistered)')
+    else bad('did not return the disposer returned by skills.register')
+    if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s?.name ?? '')) ok(`skill name "${s?.name}" matches the registry grammar`)
+    else bad('skill name fails the kebab-case grammar: ' + s?.name)
+    if (s?.name === AGENT_SKILL_NAME) ok('name comes from the exported constant')
+    else bad('name drifted from AGENT_SKILL_NAME')
+    if (typeof s?.description === 'string' && s.description.length > 0) ok('description is non-empty (the registry requires one)')
+    else bad('an empty description makes register() throw')
+    if (/`proxy /.test(s?.description ?? '')) ok('the description itself carries the `proxy ` syntax')
+    else bad('a catalog-only read would learn the feature exists but not how to use it')
+    if (typeof s?.content === 'string' && s.content.includes('proxy curl')) ok('body shows a concrete example')
+    else bad('skill body lacks a concrete example')
+    if (s?.source === 'runtime') ok("source is 'runtime'")
+    else bad("source must be 'runtime', got " + s?.source)
+  }
+
+  {
+    const r = registerAgentSkill({ get: () => undefined })
+    if (r === null) ok('returns null when the skills service is absent (guidance is never a hard dependency)')
+    else bad('must not fabricate a disposer when skills is absent')
+  }
+  {
+    const skills = { register: () => { throw new Error('already registered') } }
+    const r = registerAgentSkill(fakeCtx(skills))
+    if (r === null) ok('returns null when the registry rejects the registration')
+    else bad('must swallow a rejected registration instead of taking the plugin down')
+  }
+
+  // The skill only makes sense while `proxy` resolves, so the host must gate it on the file
+  // rather than on a setting that could disagree with the filesystem.
+  const hostText = await readFile(mainTarget, 'utf8')
+  if (/findShim\(/.test(hostText) && /syncSkill\(/.test(hostText)) ok('host gates the skill on the shim actually being on PATH')
+  else bad('host does not gate skill registration on the installed shim')
 }
 
 console.log('\n' + (failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'))

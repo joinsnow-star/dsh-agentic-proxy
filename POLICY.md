@@ -509,6 +509,33 @@ composed; inert otherwise"*。同时把 **autoStart 移进该回调** —— 它
 `dsh.bundle` 声明、`cordis.patch.yml`、真实可用代码、描述属实四条均已满足；另有两条需注意：
 **仓库需添加 `dsh-plugin` topic**，且**仓库创建满 1 天**（CI 自动检查）。
 
+### 11.5 Agent 怎么知道这个插件存在（原本的漏洞）
+
+**原来的状态：完全不知道。** 插件不注册模型工具、不加提示词段落，所以新装插件的 DSH 里，
+模型对 `proxy` 一无所知——直连失败时它会直接报告"网络不通"，永远不会想到加前缀。
+README 原本把这条写成"模型可能忘记加前缀"，实际比这更严重：**它没法忘记一件从没被告知的事。**
+
+**两条候选路径，都做了实测：**
+
+| 机制 | 实测结果 |
+| --- | --- |
+| `ctx.systemPrompt.section({name, order, text})` | ✅ 第三方插件可用；注册的段落确实进入 `assemble()` 结果，顺序正确。但 `getSectionOrder` 的类型是 `keyof SECTION_ORDERS`，**外部插件传自己的名字得到 `undefined`**，必须给字面数字。`beauticode-dsh/agent.mjs:687` 就是这么做的（`order: 160`） |
+| `ctx.skills.register(skill)` | ✅ 第三方插件可用；`invocation` 默认 `{modelInvocable: true, userInvocable: true}`，即模型可见。`dsh-tool-skill` 把技能目录作为**持久会话消息**投递，因此名称与描述**每步都在模型眼前**，正文按需加载 |
+
+**选择：技能。** 信息量只有两三行（"加 `proxy ` 前缀"），而技能目录常驻、正文按需，
+比常驻的系统提示词段落更省。代价是**描述必须自带语法**——若模型只读了目录行而没加载正文，
+它仍要知道怎么写。这条约束已写成断言（`verify-package.mjs` 第 [10] 组）。
+
+**关键约束：技能必须条件化。** `proxy` 是用户点「安装命令前缀」后才存在的命令；
+若在未安装时就告诉模型用它，模型会去执行一条无法解析的命令，**比不告诉更糟**。因此：
+
+- 启动时用 `findShim()` **重新探测** PATH（安装是手动步骤，重启不能假定任一状态）
+- 安装/移除 shim 后立即同步注册或注销
+- `skills.register()` 返回 disposer，注销是精确的
+
+另外 `skills` 与 `settings` 一样是**异步就绪**的服务，所以注册写成可重试且幂等：启动试一次、
+settings 就绪时再试一次、装/卸 shim 时各一次，重复调用无副作用。
+
 ---
 
 ## 附录：全部设置项
