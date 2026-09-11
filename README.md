@@ -25,11 +25,14 @@ allow / deny / ask，`tools/post-execute` 只能接受、替换内容或阻断�
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:joinsnow-star/dsh-agentic-proxy
+dsh plugin --profile web add dsh-agentic-proxy
 ```
 
-> **该包尚未发布到 npm。** 所以直接写包名 `add dsh-agentic-proxy` 会被 pnpm 当成
-> registry 包名去查询，并返回 `ERR_PNPM_FETCH_404`。请用上面的 GitHub 规格。
+也可以直接从 GitHub 安装（内容与 npm 版本一致）：
+
+```bash
+dsh plugin --profile web add github:joinsnow-star/dsh-agentic-proxy
+```
 
 从本地源码目录安装（开发用；pnpm 会建一个目录链接，改完代码重启 DSH 即生效）：
 
@@ -38,7 +41,11 @@ dsh plugin --profile web add D:\path\to\dsh-agentic-proxy
 ```
 
 `dsh plugin add` 只是把参数原样转发给 profile 目录下的 pnpm，并且**只有以 `.`/`..`
-开头的相对路径会被锚定到你当前所在目录**，绝对路径原样透传 —— 这正是它区别于包名的原因。
+开头的相对路径会被锚定到你当前所在目录**，绝对路径原样透传 —— 这正是路径规格区别于包名的原因。
+
+> `dsh plugin` 在 Windows 上以 `shell: true` 转发给 `cmd.exe`，而 `^` 在 cmd 里是转义字符，
+> 会被吃掉。所以 `add dsh-agentic-proxy@^0.1.0` 实际装成的是**精确版本**。想要范围就写进
+> profile 的 `package.json`，别指望命令行能传进去。
 
 CLI 会自动把包名写入 profile 的 `dsh.profile.bundles`，**无需手改任何 profile 文件**。
 

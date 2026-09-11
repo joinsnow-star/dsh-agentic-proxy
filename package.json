@@ -1,6 +1,6 @@
 {
   "name": "dsh-agentic-proxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Per-command proxy for DeepSeek Harness: the agent decides which shell commands leave through a proxy, backed by a kernel the plugin installs and supervises itself.",
   "type": "module",
   "main": "./lib/index.js",

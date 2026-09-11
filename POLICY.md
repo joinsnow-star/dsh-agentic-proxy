@@ -412,7 +412,7 @@ Harness 不提供扩展 PATH 的机制，改用户级 PATH 又要重启 DSH 才�
 
 | 步骤 | 命令 / 检查 | 结果 |
 | --- | --- | --- |
-| 反例：裸包名 | `dsh plugin --profile web add dsh-agentic-proxy` | **失败** `ERR_PNPM_FETCH_404` —— 包未发布到 npm，已据此修正 README |
+| ~~反例：裸包名~~ | `dsh plugin --profile web add dsh-agentic-proxy` | 在**发布到 npm 之前**失败 `ERR_PNPM_FETCH_404`（当时 registry 里没有这个包）；发布后已可正常安装，见 11.4 |
 | 安装（本地路径） | `dsh plugin --profile web add D:\DeskTop\MyProgram\dsh-agentic-proxy` | **成功**：`+ dsh-agentic-proxy link:D:/DeskTop/MyProgram/dsh-agentic-proxy` |
 | 注册为 profile 层 | 读 `%DSH_HOME%\profiles\web\package.json` | `dsh.profile.bundles` 末尾被 `reconcilePlugins` 自动追加 `dsh-agentic-proxy` |
 | 目录解析 | 检查 `profiles\web\node_modules\dsh-agentic-proxy` | Junction → 源码目录；`resolveBundleDir` 走 Node 查找路径并跟随符号链接 |
@@ -471,6 +471,43 @@ composed; inert otherwise"*。同时把 **autoStart 移进该回调** —— 它
 `verify-package.mjs` 新增第 **[8]** 组断言静态守住这个回归：源码（**剥离注释后**，因为解释性
 注释里也含该字符串）必须出现 `ctx.inject(['settings']`，且不得出现 eager 的
 `ctx.get('settings')`。已用旧代码片段验证该断言确实能抓到回归，而非空转。
+
+### 11.4 发布到 npm 与插件市场的收录关系
+
+**两件独立的事。** `dshmarket`（DSH 的插件市场）**不搜索 npm**，它读的是
+`awesome-dsh-plugin.com` 上的人工策展目录（3455 条，每天约新增 250 条），且市场 UI 的安装被
+限制在目录内（*"Installs are restricted to sources listed in the curated registry"*）：
+
+- **发布 npm** → 安装命令从 `github:joinsnow-star/dsh-agentic-proxy` 变成 `dsh-agentic-proxy`
+- **向策展仓库提 PR** → 市场与站点才能搜索到
+
+两者都不影响"插件本身能否被安装"——`dsh plugin --profile web add github:…` 一直可用。
+
+**npm 发布实测：**
+
+| 步骤 | 结果 |
+| --- | --- |
+| `npm publish`（首次） | **403**：`Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages` |
+| 换用带 **Bypass 2FA** 的 granular token | **成功**：`+ dsh-agentic-proxy@0.1.0` |
+| 直接读 registry（绕开 npm 缓存） | `latest=0.1.0`、`fileCount=20`、`integrity=sha512-VQHmz…`、**`dsh` 字段完好** |
+| 产物 vs 工作树逐文件 SHA256 | **20/20 一致** |
+| 在安装副本里跑它自己的自检 | **ALL CHECKS PASSED**（44 项） |
+| profile 切到 registry 规格 | `specifier: 0.1.0`，lockfile 记录同一 integrity |
+
+> npm 自 2025 起强制要求"2FA **或** 带 Bypass 2FA 的 granular token"才能发布
+> （[官方文档](https://docs.npmjs.com/requiring-2fa-for-package-publishing-and-settings-modification/)）。
+> 文档写明 bypass token 的放行"regardless of account-level or package-level 2FA settings"，
+> 因此**账号 2FA 关闭时**这正是可行路径，不必先去开 2FA。
+
+> 一个诊断陷阱：发布前反复查过包名，那些 **404 被 npm 本地缓存**，导致发布成功后
+> `npm view` 仍报 `E404`，而同一次调用里 `repository`/`homepage` 又正常返回。
+> 用 `--prefer-online` 或直接 `curl` 问 registry 才能得到真相。
+
+**策展目录收录**（提交物见仓库 `submission/`）：向
+`awesome-dsh-plugin/awesome-dsh-plugin` 提 PR，只加一个文件
+`data/plugins/joinsnow-star__dsh-agentic-proxy.yml`。其 `contributing.md` 列出的门槛中，
+`dsh.bundle` 声明、`cordis.patch.yml`、真实可用代码、描述属实四条均已满足；另有两条需注意：
+**仓库需添加 `dsh-plugin` topic**，且**仓库创建满 1 天**（CI 自动检查）。
 
 ---
 
