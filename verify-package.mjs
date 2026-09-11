@@ -10,6 +10,8 @@
  *   - cordis.patch.yml parses and its `name` matches the package name
  *   - every module parses
  *   - the host half waits for the async `settings` provider instead of racing it
+ *   - the failover decisions hold: escape a dead node, never fake a switch, degrade only
+ *     when everything is measured-and-dead
  */
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -112,6 +114,106 @@ if (/ctx\.inject\(\s*\[\s*['"]settings['"]/.test(hostSrc)) ok("waits for setting
 else bad("host half must wait for the async settings provider with ctx.inject(['settings'], …)")
 if (/ctx\.get\(\s*['"]settings['"]\s*\)/.test(hostSrc)) bad("eager ctx.get('settings') returns undefined; the provider is not yet active at apply time")
 else ok("no eager ctx.get('settings') read")
+
+// --- failover decisions: behaviour, not shape --------------------------------
+// Drives the real Watchdog against a scripted kernel API. Nothing is created on disk and
+// no kernel is contacted, so this stays a read-only inspection — but it exercises the
+// "switch away from a dead node" logic the whole feature exists for.
+console.log('\n[9] failover decisions')
+{
+  const { Watchdog } = await import('./lib/watchdog.js')
+  const TEST = 'https://test'
+  const alive = (name, delay) => ({ name, alive: true, extra: { [TEST]: { history: [{ delay }] } } })
+  const dead = (name) => ({ name, alive: false, extra: {} })
+  const untested = (name) => ({ name, alive: true, extra: {} })
+
+  /** Scripted kernel: `onRetest` decides whether a forced re-test actually re-selects. */
+  const rig = ({ members, now, onRetest }) => {
+    const calls = []
+    const events = []
+    const states = []
+    const g = { all: members.map((m) => m.name), now, fixed: '' }
+    const api = {
+      proxies: async () => ({ auto: { ...g } }),
+      providerProxies: async () => ({ proxies: members }),
+      retestGroup: async () => { calls.push('retestGroup'); if (onRetest) onRetest({ g }) },
+      healthcheckProvider: async () => { calls.push('healthcheckProvider') },
+      refreshProvider: async () => { calls.push('refreshProvider') },
+      // Kept so a future regression that re-introduces pinning is caught, not silently allowed.
+      pin: async (_g, n) => { calls.push('pin:' + n); g.fixed = n; g.now = n },
+      unpin: async () => { calls.push('unpin'); g.fixed = '' },
+    }
+    const w = new Watchdog({
+      api, group: 'auto', provider: 'sub', testUrl: TEST,
+      onEvent: (e) => events.push(e), onState: (s) => states.push(s),
+    })
+    w.stopped = false // drive tick() by hand instead of waiting on the timer
+    return { w, calls, events, states }
+  }
+
+  // (a) dead current node, re-test makes the kernel re-select a live one
+  {
+    const s = rig({ members: [dead('A'), alive('B', 50), alive('C', 80)], now: 'A', onRetest: ({ g }) => { g.now = 'B' } })
+    await s.w.tick()
+    if (s.calls.includes('retestGroup')) ok('dead node -> forced a re-test')
+    else bad('dead node did not trigger a re-test')
+    if (s.events.some((e) => e.includes('已重新测速并切换到「B」'))) ok('dead node -> switched to the live node')
+    else bad('did not report switching to the live node: ' + s.events.join(' | '))
+    if (!s.calls.some((c) => c.startsWith('pin:'))) ok('no pin attempted (url-test ignores `fixed`)')
+    else bad('pinned a node even though a url-test group ignores `fixed`')
+    if (s.states.length === 0) ok('state stayed UP')
+    else bad('state changed while a usable node existed: ' + JSON.stringify(s.states))
+  }
+
+  // (b) re-test does not help: report honestly, never fake a switch, never degrade
+  {
+    const s = rig({ members: [dead('A'), alive('B', 50), alive('C', 80)], now: 'A', onRetest: () => {} })
+    await s.w.tick()
+    if (!s.calls.some((c) => c.startsWith('pin:'))) ok('did not pin when the re-test did not help')
+    else bad('pinned after an ineffective re-test')
+    if (s.events.some((e) => e.includes('仍未自动切换到可用节点'))) ok('reported honestly that no switch happened')
+    else bad('did not report the failed switch: ' + s.events.join(' | '))
+    if (!s.events.some((e) => e.includes('临时指定'))) ok('never claimed a switch it did not make')
+    else bad('log claims a temporary pin that a url-test group cannot honour')
+    if (s.states.length === 0) ok('did NOT force DEGRADED while usable nodes exist')
+    else bad('forced DEGRADED although usable nodes exist — would send proxied traffic direct')
+  }
+
+  // (c) every member dead: DEGRADED must be published BEFORE the slow recovery
+  {
+    const order = []
+    const s = rig({ members: [dead('A'), dead('B'), dead('C')], now: 'A' })
+    const refresh = s.w.api.refreshProvider
+    s.w.api.refreshProvider = async () => { order.push('refresh'); return refresh() }
+    s.w.onState = (v) => { order.push('state:' + v); s.states.push(v) }
+    await s.w.tick()
+    if (s.states.includes('DEGRADED')) ok('all nodes dead -> published DEGRADED')
+    else bad('all nodes dead but DEGRADED was never published')
+    if (order.indexOf('state:DEGRADED') !== -1 && order.indexOf('state:DEGRADED') < order.indexOf('refresh')) ok('DEGRADED published before the slow re-fetch')
+    else bad('recovery ran before DEGRADED: ' + order.join(' -> '))
+  }
+
+  // (d) merely unmeasured is not failure
+  {
+    const s = rig({ members: [untested('A'), alive('B', 50)], now: 'A' })
+    await s.w.tick()
+    if (!s.calls.includes('retestGroup')) ok('unmeasured current node -> no escalation on the first tick')
+    else bad('escalated on an unmeasured node (a guess is not a failure)')
+    if (s.states.length === 0) ok('unmeasured current node -> state stayed UP')
+    else bad('degraded on an unmeasured node: ' + JSON.stringify(s.states))
+  }
+
+  // (e) escalation is throttled
+  {
+    const s = rig({ members: [dead('A'), alive('B', 50)], now: 'A', onRetest: () => {} })
+    await s.w.tick()
+    const first = s.calls.filter((c) => c === 'retestGroup').length
+    await s.w.tick()
+    const second = s.calls.filter((c) => c === 'retestGroup').length
+    if (second === first) ok('second tick inside the throttle window did not re-escalate')
+    else bad(`escalation was not throttled (${first} -> ${second})`)
+  }
+}
 
 console.log('\n' + (failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'))
 process.exit(failures === 0 ? 0 : 1)

@@ -128,7 +128,7 @@ window.__ModuleLoader__.load({
           var tone = f.alive > 0 ? 'ok' : (f.total > 0 ? 'x' : 'd')
           stateLines.push(h('div', { key: '5', className: tone },
             '节点：' + f.alive + ' 可用 / ' + f.dead + ' 失效 / ' + f.untested + ' 未测（共 ' + f.total + '）'))
-          if (f.now) stateLines.push(h('div', { key: '6', className: 'd' }, '当前节点：' + f.now + (f.pinned ? '（已临时指定）' : '')))
+          if (f.now) stateLines.push(h('div', { key: '6', className: 'd' }, '当前节点：' + f.now + (f.pinned ? '（内核 fixed=' + f.pinned + '）' : '')))
           if (f.nodes && f.nodes.length) {
             var top = f.nodes.slice(0, 5).map(function (n) {
               return n.name + (n.ms === null ? '' : '(' + n.ms + 'ms)')

@@ -47,29 +47,45 @@ proxy curl ...  →  HTTPS_PROXY=http://127.0.0.1:17890  →  curl 直连 mihomo
 实测：它返回 26 条实测延迟、并且**确实改变了选择**，但**每个节点的 `alive` 仍是 `undefined`**。
 所以"启动时消除未知"必须调用 **`healthcheckProvider`**，不能用 `/group/delay`。
 
-### 1.4 钉住需要节点属于该组
+### 1.4 `url-test` 组无法被外部强制指定节点（决定性实测）
 
-`PUT /proxies/{g} {name}` 在节点**不是该组成员**时返回
+先记一个容易踩的坑：`PUT /proxies/{g}` 用于**不属于该组**的节点时返回
 `400 Selector update error: proxy not exist`。
 
-provider 健康覆盖订阅里的全部节点，而一个组可能只暴露子集 ——
-所以选候选时必须与该组的 `all` 求交集。
+但更关键的是：即使节点确实是该组成员、请求返回 **204** 并把 `fixed` 写了进去，
+`url-test` 组**在选择时依然忽略它**。决定性证据是真实流量：
 
-### 1.5 `url-test` 组的 `fixed` 与 `now` 可以不一致
+| 步骤 | 观察到 |
+| --- | --- |
+| 基线 | `now=香港-优化2`，`fixed=''` |
+| 经混合端口发真实流量 | `204`，330ms |
+| `PUT /proxies/auto {name: 加拿大-优化}`（该节点 `alive=false`） | `204`；`fixed='加拿大-优化'`，但 `now` **仍是** `香港-优化2` |
+| **此时再发真实流量** | **`204`，305ms** —— 流量照常从可用节点出去 |
+| `GET /group/auto/delay`（强制重测） | `200`，5020ms；**`fixed` 被清空**，`now` 重新选定 |
 
-对 `url-test` 组 PUT 会设置 `fixed`，但 `now` 可能仍指向最快节点。
-这意味着"钉住"对自动组只是偏好，不是强制 —— 因此实现里的解除钉住逻辑是必要的。
+把 `fixed` 指向一个**已确认失效**的节点、流量却依旧畅通 —— 这证明 `fixed` 对
+`url-test` 组的选择**没有任何影响**。
 
-### 1.6 各操作的实测成本
+**必须区分组类型**：`PUT /proxies/{g}` 对 **`select` 组是真正有效的**（会改变 `now`），
+本文件早期那一轮验证正是用一个临时 `select` 组复现出切换的。但插件的 `auto` 组是
+`url-test`，所以同一个调用在**本插件的实际配置下**等同空操作。于是：
+
+- 唯一的有效杠杆是 `GET /group/{g}/delay`（强制重测并重选，实测约 5s）；
+- 插件不再调用 `PUT /proxies/{g}` 试图钉节点，`KernelApi` 的 `pin`/`unpin` 已删除。
+
+> 早期版本把"`fixed` 与 `now` 不一致"解释成"钉住对自动组只是偏好而非强制"，并据此写了
+> "临时钉住 + 稍后解除"的逻辑。上面的流量实测说明它连偏好都算不上，故该逻辑一并移除 ——
+> 它会打出"已临时指定某节点"这种**并未真实发生**的日志。
+
+### 1.5 各操作的实测成本
 
 | 操作 | 耗时 | 用途 |
 | --- | --- | --- |
 | `GET /proxies` | **8ms** | 每次轮询都读（拿 `now` / `fixed` / 成员） |
 | `GET /providers/proxies/{p}` | 小 | 每次轮询都读（拿健康） |
-| `GET /group/{g}/delay` | **4–5s** / 28 节点 | 强制重测（升级时才用） |
+| `GET /group/{g}/delay` | **4–5s** / 28 节点 | 强制重测并重选（升级时才用） |
 | `PUT /providers/proxies/{p}` | **747ms** | 重拉订阅 |
 | `GET /providers/proxies/{p}/healthcheck` | **8–9s** / 30 节点 | 强制全量测速 |
-| `PUT` / `DELETE /proxies/{g}` | 快 | 钉住 / 解除 |
 
 成本极不对称，因此轮询便宜的操作、只在升级时才用昂贵的。
 
@@ -99,12 +115,14 @@ provider 健康覆盖订阅里的全部节点，而一个组可能只暴露子�
 
 升级（`#escalate`）：
 
-1. `GET /group/{g}/delay` 强制重测 —— `url-test` 会自行重选；
+1. `GET /group/{g}/delay` 强制重测 —— `url-test` 会自行重选，且该调用会清空 `fixed`；
 2. 重读；若 `now` 已健康 → 完成；
-3. 仍未健康 → 从**该组成员中**选最快的存活节点，`PUT` 临时钉住；
-4. 组内无存活节点 → 交给第 4 层。
+3. 仍未重选到可用节点 → **如实记录**"重新测速后仍未自动切换到可用节点"，状态保持 `UP`。
 
-**理由**：第 1、2 步是"让内核自己选"，只有在它选不出来时才越权指定。
+**为什么第 3 步不再尝试钉节点**：见 1.4 —— `url-test` 忽略 `fixed`，钉住改不了选择，
+只会产生一条不实的日志。此分支必然有存活节点（`alive === 0` 的情况在 `tick()` 更早处
+就被第 4 层接管），所以此时**绝不能**写 `DEGRADED`：那会把仍然可用的代理流量错误地
+改成直连。
 
 ### 第 3 层：进程崩溃（`kernel.js`）
 
@@ -179,20 +197,39 @@ provider 健康覆盖订阅里的全部节点，而一个组可能只暴露子�
 
 ### 第 3 项（核心诉求）的实测输出
 
-`url-test` 组不会自己选中死节点（它选最快），所以"你在用的节点挂了"这个场景用
-`select` 组复现：把它显式指向一个订阅自己报告为失败的节点，然后观察。
+`url-test` 组选的是最快节点，正常不会自己停在死节点上；而 1.4 已证明**无法**从外部通过
+`fixed` 强制它选某个节点（真实流量不受 `fixed` 影响）。所以这一层改为**用真实 `Watchdog`
+类 + 脚本化 API** 做确定性验证，覆盖手动钉住无法构造的场景：
 
 ```
-"pickdead" members = 30
-dead candidates among members: 4
-[3] "pickdead" (select group) -> dead node "加拿大-优化"
-    before: now=加拿大-优化
-  [pick] 当前节点「加拿大-优化」已失效
-  [pick] 重新测速后仍未自动切换，临时指定「香港WAP-优化2」（53ms）
-    after : now=香港WAP-优化2 (state=alive)
-    => escaped the dead node: YES
-    => landed on a healthy node: YES
+[S1] 当前节点 dead，重测让内核重选
+  PASS re-test was attempted
+  PASS switched to the live node
+  PASS no pin was needed
+  PASS state stayed UP
+[S2] 当前节点 dead 且重测无效 -> 如实报告，绝不谎报切换
+  PASS re-test was attempted
+  PASS did NOT pin (url-test ignores `fixed`)
+  PASS reported honestly that no switch happened
+  PASS never claimed a switch it did not make
+  PASS did NOT force DEGRADED while usable nodes exist
+[S3] 组内全挂 -> DEGRADED 必须先于慢恢复发布
+  PASS published DEGRADED
+  PASS DEGRADED came BEFORE the slow re-fetch
+  PASS recovery still attempted
+[S4] 当前节点仅"未测速" -> 不得升级、不得降级
+  PASS no re-test on the first unmeasured tick
+  PASS state stayed UP (a guess is not a failure)
+  PASS escalates after the grace period
+  PASS reason names the missing measurement
+[S5] 升级限流
+  PASS second tick within the window did not re-escalate
+  PASS and it said so
 ```
+
+> 早期一轮验证用一个临时 `select` 组复现了"钉住死节点 → 观察到切换"，并因此保留了
+> 钉住逻辑。但 `select` 组的行为**不能推广到 `url-test` 组**；上面的流量实测才代表了
+> 本插件真实的配置，故该逻辑已被删除。
 
 ---
 
@@ -200,7 +237,7 @@ dead candidates among members: 4
 
 | 不做 | 理由 |
 | --- | --- |
-| 永久钉住节点 | 钉住即设 `fixed`，组停止自动优化；被钉节点随后死掉就卡住了 |
+| 钉住节点试图强制切换 | 实测 `url-test` 忽略 `fixed`（1.4）；唯一的杠杆是强制重测 |
 | 在 JS 里解析/排序订阅节点 | 内核已做；重复的事实来源，订阅格式一变就要改代码 |
 | 对单个请求重试/改路由 | **不可能** —— 插件不在流量链路上（第 0 节） |
 | 把"未测速"当"失效" | 实测启动时全部节点都未测速；那样会在启动瞬间误判并乱切 |
