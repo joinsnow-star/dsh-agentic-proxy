@@ -53,12 +53,21 @@ if (remote === head) ok('origin/main is the same commit as local HEAD')
 else bad(`origin/main ${remote.slice(0, 7)} != local HEAD ${head.slice(0, 7)} — push or pull`)
 
 const tagName = `v${version}`
+let tagCommit = null
 try {
-  const tagCommit = await git('rev-parse', `${tagName}^{commit}`)
-  if (tagCommit === head) ok(`tag ${tagName} points at HEAD`)
-  else bad(`tag ${tagName} points at ${tagCommit.slice(0, 7)}, not HEAD ${head.slice(0, 7)}`)
+  tagCommit = await git('rev-parse', `${tagName}^{commit}`)
+  ok(`tag ${tagName} -> ${tagCommit.slice(0, 7)}`)
 } catch {
   bad(`tag ${tagName} does not exist — releases must be tagged so an npm version maps to a commit`)
+}
+// The tag does NOT have to equal HEAD. Commits that only touch repo-only files (docs, this
+// script, submission/) legitimately land after a release. What must hold is that nothing
+// inside the PUBLISHED set changed since the tag — otherwise the tarball no longer matches
+// the commit its version names, and the version has to be bumped.
+if (tagCommit !== null) {
+  const changed = await git('diff', '--name-only', tagName, 'HEAD', '--', ...pkg.files)
+  if (changed === '') ok(`published content unchanged since ${tagName} (HEAD ahead only by repo-only files)`)
+  else bad(`published files changed after ${tagName} without a version bump:\n${changed}`)
 }
 
 // ------------------------------------------------------------------ npm ----
