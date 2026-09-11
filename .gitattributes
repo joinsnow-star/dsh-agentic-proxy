@@ -1,0 +1,12 @@
+# Normalize to LF in the repository; Git checks out native endings per platform.
+# Relevant here because cmd.exe reads the generated proxy.cmd in the local codepage and
+# with native CRLF, which lib/shim.js emits explicitly rather than relying on the file.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.zip binary
+*.mmdb binary
+*.dat binary

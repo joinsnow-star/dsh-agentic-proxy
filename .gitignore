@@ -1,0 +1,22 @@
+# Dependencies (this package has none, but profile installs may create this)
+node_modules/
+
+# npm pack output
+*.tgz
+
+# Runtime data — never commit: the kernel binary (~50MB), its config, the fetched
+# subscription, GeoIP data, and process state all live under $DSH_HOME/dyn-proxy,
+# not here. These entries would only appear if someone ran a probe in-tree.
+dyn-proxy/
+*.part
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

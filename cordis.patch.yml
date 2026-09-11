@@ -1,0 +1,7 @@
+# dsh.bundle.patch layer. `dsh plugin --profile <name> add <this package>` appends the
+# package name to the profile's dsh.profile.bundles and mounts this row, so installing
+# needs no profile edits. `name` must be the real package name or startup fails.
+- insert:
+    - id: agentic-proxy
+      name: dsh-agentic-proxy
+      inject: [webServer]

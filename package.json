@@ -1,0 +1,59 @@
+{
+  "name": "dsh-agentic-proxy",
+  "version": "0.1.0",
+  "description": "Per-command proxy for DeepSeek Harness: the agent decides which shell commands leave through a proxy, backed by a kernel the plugin installs and supervises itself.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js"
+    },
+    "./client": "./client/client.js"
+  },
+  "files": [
+    "lib",
+    "client",
+    "cordis.patch.yml",
+    "README.md",
+    "POLICY.md",
+    "DESIGN.md",
+    "FAILOVER.md",
+    "FINDINGS.md",
+    "LICENSE",
+    "verify-package.mjs"
+  ],
+  "scripts": {
+    "verify": "node verify-package.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "proxy",
+    "mihomo",
+    "clash"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joinsnow-star/dsh-agentic-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/joinsnow-star/dsh-agentic-proxy/issues"
+  },
+  "homepage": "https://github.com/joinsnow-star/dsh-agentic-proxy#readme"
+}
