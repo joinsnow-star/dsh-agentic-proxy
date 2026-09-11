@@ -75,7 +75,7 @@ CLI 会自动把包名写入 profile 的 `dsh.profile.bundles`，**无需手改�
 
 - **首次需要能访问 GitHub。** npm 与 npmmirror 都**没有** mihomo 二进制，所以下载源是
   GitHub 直连 + `gh-proxy.com` + `ghproxy.net`。若三者都不可达，请手动下载内核并在设置里
-  填入路径。（可在 `FINDINGS.md` 查看实测数据。）
+  填入路径。（实测数据见仓库中的 `FINDINGS.md`。）
 - **无官方 sha256。** 上游不提供校验文件，因此只做了长度比对与 zip 头校验这类弱校验。
 - **仅 Windows 已实测。** 内核获取、解压（`tar.exe`）与 shim（`.cmd`）目前是 Windows 路径。
 - **`proxy` 会进入 PATH。** 插件停止时会按标记清理；若你手动删过文件，残留的
@@ -97,8 +97,12 @@ lib/index.js     插件入口
 client/client.js 设置页（零构建）
 ```
 
-`DESIGN.md` 记录设计决策与取舍，`POLICY.md` 是**全部策略的说明书**（各种情况下插件
-会怎么做、已知局限清单），`FINDINGS.md` 记录实测事实与出处。
+`POLICY.md` 是**全部策略的说明书**（各种情况下插件会怎么做、已知局限清单），**随包发布**。
+
+以下三份是工程记录，只在
+[GitHub 仓库](https://github.com/joinsnow-star/dsh-agentic-proxy)里，不随 npm 包分发：
+`DESIGN.md`（设计决策与取舍）、`FAILOVER.md`（故障转移机制与实测数字）、
+`FINDINGS.md`（实测事实与出处）。
 
 ## License
 

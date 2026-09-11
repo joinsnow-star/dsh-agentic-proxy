@@ -7,10 +7,13 @@
 > tag `v<version>` 所指向的提交，其 `files` 白名单内的内容，
 > 与 npm 上 `<version>` 的 tarball **逐字节相同**。
 
-`README.md` / `POLICY.md` 这类仓库专属文件（`submission/`、`.gitignore`、`RELEASING.md`、
-`check-sync.mjs`）**不进** `files`，因此永远不会出现在 npm 包里——这正是上面那条不变式能成立的
-原因。**不要为了"让仓库和 npm 一样"而把仓库专属文件塞进 `files`**：那会让已发布版本的
-内容发生变化，直接破坏 tag 与 npm 的对应关系。
+`DESIGN.md`、`FAILOVER.md`、`FINDINGS.md`、`RELEASING.md`、`check-sync.mjs`、`submission/`、
+`.gitignore`、`.gitattributes` 这类**仓库专属文件不进** `files`，因此永远不会出现在 npm 包里
+——这正是上面那条不变式能成立的原因。**不要为了"让仓库和 npm 一样"而把仓库专属文件塞进
+`files`**：那会让已发布版本的内容发生变化，直接破坏 tag 与 npm 的对应关系。
+
+（`README.md`、`POLICY.md`、`LICENSE`、`verify-package.mjs` 则**是**随包发布的：前两者面向
+使用者，`verify-package.mjs` 是包自身的契约自检，由 `npm run verify` 调用。）
 
 随时可以检查：
 

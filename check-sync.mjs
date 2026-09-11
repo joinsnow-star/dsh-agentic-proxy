@@ -139,9 +139,14 @@ if (dist === undefined) {
     else bad('drifted from the working tree: ' + drifted.join(', '))
 
     // Repo-only files must NOT be published — that is what keeps the tags meaningful.
-    const repoOnly = ['RELEASING.md', 'check-sync.mjs']
+    // Derived from the actual git index rather than a hardcoded list, so adding or removing
+    // a repo-only file (or trimming `files`) can never leave this assertion stale.
+    const tracked = (await git('ls-files')).split('\n').filter(Boolean)
+    const repoOnly = tracked.filter(
+      (f) => f !== 'package.json' && !pkg.files.some((e) => f === e || f.startsWith(e + '/')),
+    )
     const leaked = published.filter((f) => repoOnly.includes(f))
-    if (leaked.length === 0) ok('repo-only files are not in the published set')
+    if (leaked.length === 0) ok(`repo-only files are not published (${repoOnly.length} checked)`)
     else bad('repo-only files leaked into npm: ' + leaked.join(', '))
   } catch (error) {
     bad(`could not compare tarball content: ${error.message}`)
