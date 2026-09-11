@@ -381,7 +381,7 @@ Harness 不提供扩展 PATH 的机制，改用户级 PATH 又要重启 DSH 才�
 | 5 | `fallback` 组未被规则引用 | 无影响，仅作手动切换备选 | 设计如此 |
 | 6 | 仅 **Windows** 实测（内核获取、`tar.exe` 解压、`.cmd` shim） | Linux/macOS 未验证 | 待补 |
 | 7 | ~~`repository.url` 是占位；无 LICENSE~~ | — | ✅ **已解决**：`LICENSE` 已补；仓库地址已填为 `github.com/joinsnow-star/dsh-agentic-proxy` |
-| 8 | **尚未作为正式插件装载验证**（需 `dsh plugin add` + 重启 DSH） | 未在真实装载下跑过 | **待验证**（会中断当前会话） |
+| 8 | **正式插件装载**：安装与配置合成已实测通过；**运行时激活待重启后确认** | 重启前设置页不会出现该栏 | 🟡 **部分验证**：已装、已进合成树；激活未验（见 11.2） |
 | 9 | 首次使用需要能访问 GitHub | 三个来源全挂时无境内兜底 | 已文档化 |
 | 10 | 无官方 sha256，仅弱校验 | 无法做密码学校验 | 上游限制 |
 
@@ -395,6 +395,25 @@ Harness 不提供扩展 PATH 的机制，改用户级 PATH 又要重启 DSH 才�
 | pid 文件指向镜像名不符的存活进程 | 正确判定为非本插件（`image: node.exe` ≠ `mihomo.exe`） |
 | `stop()` 遇到复用的 PID | 不杀无关进程 |
 | 真实内核全流程：启动 → 复用 → 停止 → 重启 → 代理请求 | 启动成功、复用未重启、重启后代理请求返回 **204** |
+
+### 11.2 正式装载的实测记录
+
+| 步骤 | 命令 / 检查 | 结果 |
+| --- | --- | --- |
+| 反例：裸包名 | `dsh plugin --profile web add dsh-agentic-proxy` | **失败** `ERR_PNPM_FETCH_404` —— 包未发布到 npm，已据此修正 README |
+| 安装（本地路径） | `dsh plugin --profile web add D:\DeskTop\MyProgram\dsh-agentic-proxy` | **成功**：`+ dsh-agentic-proxy link:D:/DeskTop/MyProgram/dsh-agentic-proxy` |
+| 注册为 profile 层 | 读 `%DSH_HOME%\profiles\web\package.json` | `dsh.profile.bundles` 末尾被 `reconcilePlugins` 自动追加 `dsh-agentic-proxy` |
+| 目录解析 | 检查 `profiles\web\node_modules\dsh-agentic-proxy` | Junction → 源码目录；`resolveBundleDir` 走 Node 查找路径并跟随符号链接 |
+| 配置合成 | `dsh --profile web --dump-config` | **exit 0**（576 行），含 `id: agentic-proxy` / `name: dsh-agentic-proxy` / `inject: [webServer]` |
+| 宿主入口导入 | `import('./lib/index.js')` | `name=dsh-agentic-proxy`，`apply=function`，`inject=["webServer"]` |
+| 客户端语法 | `node --check client/client.js` | 通过 |
+| 自检套件 | `node verify-package.mjs` | `ALL CHECKS PASSED` |
+| GitHub 规格（发行路径） | 临时目录内 `pnpm add github:joinsnow-star/dsh-agentic-proxy` | **成功**：`+ dsh-agentic-proxy 0.1.0`（38.4s）；11 个文件齐全、入口可导入 |
+| 运行时激活 | 探测 `POST /__dsh-agentic-proxy/rpc` | **未注册**：返回 405，与未知路由一致（若已注册，POST 会命中处理器返回 200 JSON），符合预期 —— 需重启 |
+
+关于 boot 期风险：`ctx.get('settings')` 是可选依赖且包在 try/catch 内，`registerRpc` 在
+`webServer` 缺失时降级返回 `{registered:false}`，autoStart 走 `void start().catch(...)`
+永不抛进 loader。因此 boot 阶段唯一可能的失败点是**导入期**，而导入期已单独验证通过。
 
 ---
 

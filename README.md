@@ -25,16 +25,25 @@ allow / deny / ask，`tools/post-execute` 只能接受、替换内容或阻断�
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-agentic-proxy
-```
-
-或直接从 GitHub：
-
-```bash
 dsh plugin --profile web add github:joinsnow-star/dsh-agentic-proxy
 ```
 
+> **该包尚未发布到 npm。** 所以直接写包名 `add dsh-agentic-proxy` 会被 pnpm 当成
+> registry 包名去查询，并返回 `ERR_PNPM_FETCH_404`。请用上面的 GitHub 规格。
+
+从本地源码目录安装（开发用；pnpm 会建一个目录链接，改完代码重启 DSH 即生效）：
+
+```bash
+dsh plugin --profile web add D:\path\to\dsh-agentic-proxy
+```
+
+`dsh plugin add` 只是把参数原样转发给 profile 目录下的 pnpm，并且**只有以 `.`/`..`
+开头的相对路径会被锚定到你当前所在目录**，绝对路径原样透传 —— 这正是它区别于包名的原因。
+
 CLI 会自动把包名写入 profile 的 `dsh.profile.bundles`，**无需手改任何 profile 文件**。
+
+装完必须**重启 DSH**：bundle 层列表只在启动时解析一次，运行中的进程不会热加载新插件
+（`patchReload: live` 只热重载 profile 目录下的用户 patch 文件，不含 bundle 列表）。
 
 ## 使用
 
