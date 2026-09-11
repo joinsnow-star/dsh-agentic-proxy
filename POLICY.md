@@ -381,9 +381,10 @@ Harness 不提供扩展 PATH 的机制，改用户级 PATH 又要重启 DSH 才�
 | 5 | `fallback` 组未被规则引用 | 无影响，仅作手动切换备选 | 设计如此 |
 | 6 | 仅 **Windows** 实测（内核获取、`tar.exe` 解压、`.cmd` shim） | Linux/macOS 未验证 | 待补 |
 | 7 | ~~`repository.url` 是占位；无 LICENSE~~ | — | ✅ **已解决**：`LICENSE` 已补；仓库地址已填为 `github.com/joinsnow-star/dsh-agentic-proxy` |
-| 8 | **正式插件装载**：安装与配置合成已实测通过；**运行时激活待重启后确认** | 重启前设置页不会出现该栏 | 🟡 **部分验证**：已装、已进合成树；激活未验（见 11.2） |
+| 8 | ~~**尚未作为正式插件装载验证**~~ | — | ✅ **已验证**：插件已装载、设置页已出现、RPC 已通（见 11.2）；首次装载暴露的 settings 竞态见 11.3 |
 | 9 | 首次使用需要能访问 GitHub | 三个来源全挂时无境内兜底 | 已文档化 |
 | 10 | 无官方 sha256，仅弱校验 | 无法做密码学校验 | 上游限制 |
+| 11 | 宿主半边在 `apply` 期用 `ctx.get('settings')` 取服务，撞上 provider 的异步就绪 | 命名空间注册失败，设置页报「settings 服务不可用」 | ✅ **已修**：改用 `ctx.inject(['settings'], …)` 等待激活（见 11.3） |
 
 ### 11.1 本次修复的验证
 
@@ -409,11 +410,56 @@ Harness 不提供扩展 PATH 的机制，改用户级 PATH 又要重启 DSH 才�
 | 客户端语法 | `node --check client/client.js` | 通过 |
 | 自检套件 | `node verify-package.mjs` | `ALL CHECKS PASSED` |
 | GitHub 规格（发行路径） | 临时目录内 `pnpm add github:joinsnow-star/dsh-agentic-proxy` | **成功**：`+ dsh-agentic-proxy 0.1.0`（38.4s）；11 个文件齐全、入口可导入 |
-| 运行时激活 | 探测 `POST /__dsh-agentic-proxy/rpc` | **未注册**：返回 405，与未知路由一致（若已注册，POST 会命中处理器返回 200 JSON），符合预期 —— 需重启 |
+| 运行时激活 | 重启后：设置页出现「代理管家」栏、RPC 路由可达 | **已验证** —— 首次装载即成功，并由此暴露 settings 竞态（见 11.3） |
 
-关于 boot 期风险：`ctx.get('settings')` 是可选依赖且包在 try/catch 内，`registerRpc` 在
+关于 boot 期风险：`settings` 现在通过 `ctx.inject` 等待（见 11.3），`registerRpc` 在
 `webServer` 缺失时降级返回 `{registered:false}`，autoStart 走 `void start().catch(...)`
 永不抛进 loader。因此 boot 阶段唯一可能的失败点是**导入期**，而导入期已单独验证通过。
+
+### 11.3 首次真实装载暴露的 bug：settings 竞态
+
+第一次重启后插件**成功装载** —— 设置页出现了「代理管家」一栏，RPC 路由可达 —— 但页面显示
+`错误：settings 服务不可用`。
+
+**根因（源码级证据）。** `@deepseek-ai/dsh-settings` 的 `SettingsProvider` 在构造函数里就用
+`super(ctx, "settings")` 声明了服务，但它的 fiber 要等 `[Service.init]` 里
+`this.publish(await this.load())` 这次**异步磁盘读取**完成后才进入 active：
+
+```js
+_getImpl(name, strict = true) {
+  const impl = this.store[key]
+  if (!impl) return
+  if (strict && impl.fiber.state !== 2) return   // 只返回"提供者已激活"的服务
+  return impl
+}
+```
+
+所以在我们的 `apply` 时刻服务处于"已声明但未激活"，`ctx.get('settings')`（`strict` 默认
+`true`）**既不抛异常也不返回服务，而是返回 `undefined`**，正好落进原来的 else 分支。错误
+信息本身也是误导的：服务并非"不可用"，只是"还没就绪"。
+
+**修复。** 改用 `ctx.inject(['settings'], (sctx) => …)` —— `ctx.inject` 即
+`ctx.plugin({inject, apply})`（cordis `lib/index.js:1599`），等依赖就绪再启动一个嵌套
+fiber，并在 provider 被替换时重跑。这与 harness 自身的插件一致：`dsh-context` 用的就是
+`ctx.inject(["settings"], …)`，注释写明 *"Serve the namespace while a settings provider is
+composed; inert otherwise"*。同时把 **autoStart 移进该回调** —— 它依赖只在 settings 就绪后
+才能读到的配置，留在 `apply` 末尾会永远读到 `DEFAULTS`（订阅地址为空），从而**静默不启动**。
+
+**验证**（用本机 DSH 安装里的**真实 cordis** 搭最小宿主，让 settings 延迟提供，复现同一
+可观测状态）：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `apply` 时刻 `ctx.get('settings')` | `undefined` —— 复现 bug 条件 |
+| provider 激活前 `status` | `settingsReady=false`，`lastError=""`（不再误报错误） |
+| provider 激活后 `status` | `settingsReady=true` —— 注入的 fiber 正确触发 |
+| 命名空间注册 | `dsh-agentic-proxy` 已注册 |
+| `save()` 往返 | 订阅地址正确读写 |
+| schema 契约 | 可调用 **且** 有 `toJSON()`，6 个字段齐全（满足 `register` 中 `schema(...)` 与 `schema.toJSON()` 两处用法） |
+
+`verify-package.mjs` 新增第 **[8]** 组断言静态守住这个回归：源码（**剥离注释后**，因为解释性
+注释里也含该字符串）必须出现 `ctx.inject(['settings']`，且不得出现 eager 的
+`ctx.get('settings')`。已用旧代码片段验证该断言确实能抓到回归，而非空转。
 
 ---
 

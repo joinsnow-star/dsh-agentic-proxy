@@ -142,6 +142,7 @@ window.__ModuleLoader__.load({
           }
         }
         if (st.lastError) stateLines.push(h('div', { key: 'e', className: 'x' }, st.lastError))
+        else if (st.settingsReady === false) stateLines.push(h('div', { key: 'w', className: 'd' }, '正在等待 settings 服务就绪…'))
         children.push(h('div', { className: 'c', key: 'state' }, stateLines))
       }
 

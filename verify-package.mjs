@@ -9,6 +9,7 @@
  *   - the client half is a classic script (no module syntax) and calls __ModuleLoader__.load
  *   - cordis.patch.yml parses and its `name` matches the package name
  *   - every module parses
+ *   - the host half waits for the async `settings` provider instead of racing it
  */
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -98,6 +99,19 @@ if (host.name === pkg.name) ok('exports name = ' + host.name)
 else bad('exported name mismatch: ' + host.name)
 if (Array.isArray(host.inject)) ok('inject declares ' + JSON.stringify(host.inject))
 else bad('inject must be an array (needs webServer for the settings RPC)')
+
+// --- settings access must not race the async provider ------------------------
+// Regression guard. `settings` is provided by a fiber that only becomes ACTIVE after its
+// async init (a disk read), and cordis `get(name, strict=true)` filters out inactive
+// providers — so an apply-time `ctx.get('settings')` returns undefined with no error.
+// The plugin must wait with ctx.inject instead.
+console.log('\n[8] settings is read through ctx.inject, not an eager ctx.get')
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+const hostSrc = stripComments(await readFile(mainTarget, 'utf8'))
+if (/ctx\.inject\(\s*\[\s*['"]settings['"]/.test(hostSrc)) ok("waits for settings via ctx.inject(['settings'], …)")
+else bad("host half must wait for the async settings provider with ctx.inject(['settings'], …)")
+if (/ctx\.get\(\s*['"]settings['"]\s*\)/.test(hostSrc)) bad("eager ctx.get('settings') returns undefined; the provider is not yet active at apply time")
+else ok("no eager ctx.get('settings') read")
 
 console.log('\n' + (failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'))
 process.exit(failures === 0 ? 0 : 1)
