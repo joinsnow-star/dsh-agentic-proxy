@@ -1,0 +1,6 @@
+url: https://github.com/joinsnow-star/dsh-agentic-proxy
+name: joinsnow-star/dsh-agentic-proxy
+category: tools
+description:
+  en: 'Per-command proxy for DeepSeek Harness: the agent chooses which shell commands go out through a proxy, backed by a mihomo kernel the plugin downloads and supervises itself.'
+  zh: '让 agent 逐条选择哪些 shell 命令走代理：内核由插件自行下载与托管，崩溃会自动重启，节点失效会自动切换。'
