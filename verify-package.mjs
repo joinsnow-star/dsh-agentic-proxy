@@ -243,6 +243,13 @@ console.log('\n[10] agent skill registration')
     else bad('a catalog-only read would learn the feature exists but not how to use it')
     if (typeof s?.content === 'string' && s.content.includes('proxy curl')) ok('body shows a concrete example')
     else bad('skill body lacks a concrete example')
+    // The Schannel failure is unguessable from its error text, and it is the one failure the
+    // Agent can recover from unaided — so the recovery must ship with the guidance.
+    if (/SEC_E_NO_CREDENTIALS/.test(s?.content ?? '') && /http\.sslBackend=openssl/.test(s?.content ?? '')) {
+      ok('body teaches the Schannel escape hatch (a sandboxed curl/git cannot reach the cert store)')
+    } else {
+      bad('body must cover schannel/SEC_E_NO_CREDENTIALS and its http.sslBackend=openssl workaround')
+    }
     if (s?.source === 'runtime') ok("source is 'runtime'")
     else bad("source must be 'runtime', got " + s?.source)
   }

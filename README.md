@@ -86,6 +86,13 @@ CLI 会自动把包名写入 profile 的 `dsh.profile.bundles`，**无需手改�
   正文按需加载。**因此技能只在 `proxy` 命令确实存在于 PATH 上时才注册**——否则等于让模型
   去执行一条不存在的命令。未点过「安装命令前缀」时不会有这个技能。
 - **模型仍可能选择不用。** 知道能力存在不等于每次都会用；直连失败时它更可能直接报告"网络不通"。
+- **受限沙箱里 Schannel 可能拿不到证书凭据。** `curl.exe`（以及 git 在 Schannel 模式下）
+  会报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030E)`。
+  **这不是代理不通**（通道已经建立），而是 TLS 后端取不到 Windows 证书库。对**该条命令**
+  加 `-c http.sslBackend=openssl` 即可（`proxy git -c http.sslBackend=openssl clone …`）；
+  Node 与 Python 自带 OpenSSL，不受影响。**不要**把它写进全局 git 配置——Schannel 用的是
+  Windows 证书库，某些环境（企业 MITM 代理）的根证书只在系统库里，强制 OpenSSL 会因无法
+  验证证书而失败。这一条已写进技能正文，Agent 遇到时可自行恢复。
 
 ## 开发
 
